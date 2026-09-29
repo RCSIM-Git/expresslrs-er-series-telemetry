@@ -22,9 +22,12 @@ typedef struct
     uint16_t millisecond;
 } GpsData;
 
+class HardwareSerial;
+
 class SerialGPS final : public SerialIO {
 public:
-    explicit SerialGPS(Stream &out, Stream &in) : SerialIO(&out, &in) {}
+    explicit SerialGPS(Stream &out, Stream &in, HardwareSerial *hw = nullptr) 
+        : SerialIO(&out, &in), _hwPort(hw) {}
     ~SerialGPS() override = default;
 
     typedef void (*gpsFieldParser_t)(SerialGPS *ctx, uint8_t fieldIdx, char *field);
@@ -43,8 +46,22 @@ private:
     static void fieldParseVTG(SerialGPS *ctx, uint8_t fieldIdx, char *field);
     static void fieldParseRMC(SerialGPS *ctx, uint8_t fieldIdx, char *field);
 
+    void sendDiagnosticTelemetryFrame(bool streamLost);
+
     GpsData gpsData = {0};
     // NMEA 0183 has a maximum 82 byte sentence, including the end delimiter \r\n
     char nmeaBuffer[83] = {0};
     uint8_t nmeaBufferIndex = 0;
+
+    HardwareSerial *_hwPort = nullptr;
+    bool hasGga = false;
+    uint8_t currentBaudIndex = 0;
+    bool baudLocked = false;
+    uint32_t lastBaudSwitchMs = 0;
+    uint32_t validPacketsCount = 0;
+    uint32_t rawBytesCount = 0;
+    uint32_t csumErrors = 0;
+    uint32_t lastValidPacketMs = 0;
+    uint32_t lastDiagFrameMs = 0;
 };
+

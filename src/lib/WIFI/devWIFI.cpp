@@ -463,13 +463,30 @@ static void GetConfiguration(AsyncWebServerRequest *request)
     for (int ch=0; ch<GPIO_PIN_PWM_OUTPUTS_COUNT; ++ch)
     {
       const auto channel = cfg["pwm"][ch].to<JsonObject>();
-      channel["config"] = config.GetPwmChannel(ch)->raw;
-      channel["pin"] = GPIO_PIN_PWM_OUTPUTS[ch];
-      uint8_t features = 0;
+      rx_config_pwm_t chPwm;
+      chPwm.raw = config.GetPwmChannel(ch)->raw;
       auto pin = GPIO_PIN_PWM_OUTPUTS[ch];
+
+      if (config.GetSerialProtocol() == PROTOCOL_GPS && pin == U0TXD_GPIO_NUM)
+      {
+        if (chPwm.val.mode >= somSerial)
+        {
+          chPwm.val.mode = som50Hz;
+        }
+      }
+
+      channel["config"] = chPwm.raw;
+      channel["pin"] = pin;
+      uint8_t features = 0;
       if (!OPT_PWM_OUT_ONLY)
       {
-        if (pin == U0TXD_GPIO_NUM) features |= 1;  // SerialTX supported
+        if (pin == U0TXD_GPIO_NUM)
+        {
+          if (config.GetSerialProtocol() != PROTOCOL_GPS)
+          {
+            features |= 1;  // SerialTX supported
+          }
+        }
         else if (pin == U0RXD_GPIO_NUM) features |= 2;  // SerialRX supported
         else if (pin == GPIO_PIN_SCL) features |= 4;  // I2C SCL supported (only on this pin)
         else if (pin == GPIO_PIN_SDA) features |= 8;  // I2C SDA supported (only on this pin)
@@ -677,6 +694,17 @@ static void UpdateConfiguration(AsyncWebServerRequest *request, JsonVariant &jso
          pwmChannel.val.mode == somSerial1RX || pwmChannel.val.mode == somSerial1TX))
     {
       pwmChannel.val.mode = som50Hz;
+    }
+    if (config.GetSerialProtocol() == PROTOCOL_GPS)
+    {
+      if (GPIO_PIN_PWM_OUTPUTS[channel] == U0TXD_GPIO_NUM && pwmChannel.val.mode >= somSerial)
+      {
+        pwmChannel.val.mode = som50Hz;
+      }
+      else if (GPIO_PIN_PWM_OUTPUTS[channel] == U0RXD_GPIO_NUM)
+      {
+        pwmChannel.val.mode = somSerial;
+      }
     }
     //DBGLN("PWMch(%u)=%u", channel, val);
     config.SetPwmChannelRaw(channel, pwmChannel.raw);

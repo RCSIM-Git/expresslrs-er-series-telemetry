@@ -1,11 +1,51 @@
 #include "SerialGPS.h"
+#include <HardwareSerial.h>
 
 #include "CRSFRouter.h"
 #include <crsf_protocol.h>
 
+static const uint32_t gpsBaudRates[] = { 9600, 115200, 38400, 57600 };
+static const uint8_t gpsBaudRatesCount = sizeof(gpsBaudRates) / sizeof(gpsBaudRates[0]);
+
 void SerialGPS::sendQueuedData(uint32_t maxBytesToSend)
 {
+    uint32_t now = millis();
+    if (!baudLocked && _hwPort != nullptr)
+    {
+        if (lastBaudSwitchMs == 0)
+        {
+            lastBaudSwitchMs = now;
+        }
+        else if (now - lastBaudSwitchMs >= 2500)
+        {
+            lastBaudSwitchMs = now;
+            currentBaudIndex = (currentBaudIndex + 1) % gpsBaudRatesCount;
+            uint32_t newBaud = gpsBaudRates[currentBaudIndex];
+            _hwPort->flush();
+            _hwPort->updateBaudRate(newBaud);
+            if (_hwPort != nullptr)
+            {
+                while (_hwPort->available())
+                {
+                    _hwPort->read();
+                }
+            }
+            nmeaBufferIndex = 0;
+            DBGLN("GPS Auto-Baud: trying %u baud", newBaud);
+        }
+    }
+
+    bool streamLost = (validPacketsCount > 0 && (now - lastValidPacketMs > 3000));
+    if (validPacketsCount == 0 || streamLost)
+    {
+        if (now - lastDiagFrameMs >= 1000)
+        {
+            lastDiagFrameMs = now;
+            sendDiagnosticTelemetryFrame(streamLost);
+        }
+    }
 }
+
 
 /***
 * @brief Parses a decimal string with optional decimal point and returns the value scaled by the given factor as an integer
@@ -72,7 +112,6 @@ bool SerialGPS::isValidChecksum(char *sentence, uint8_t size)
     // Could also check for the \r\n but we know it at least has the \n to get here
     if (size < 6 || sentence[0] != '$' || sentence[size-5] != '*')
     {
-        DBGLN("NMEA invalid");
         return false;
     }
 
@@ -86,10 +125,16 @@ bool SerialGPS::isValidChecksum(char *sentence, uint8_t size)
     uint8_t csumSentence = strtol((char *)&sentence[size-4], nullptr, 16);
     if (csumCalculated != csumSentence)
     {
-        DBGLN("NMEA csum");
         return false;
     }
 
+    if (!baudLocked)
+    {
+        baudLocked = true;
+        DBGLN("GPS Baud locked at %u", gpsBaudRates[currentBaudIndex]);
+    }
+    validPacketsCount++;
+    lastValidPacketMs = millis();
     return true;
 }
 
@@ -174,6 +219,39 @@ void SerialGPS::fieldParseRMC(SerialGPS *ctx, uint8_t fieldIdx, char *field)
             ctx->gpsData.hour = time_ms % 100;
             break;
         }
+        case 3: // Latitude: DDMM.MMMMM
+        {
+            ctx->gpsData.lat = nmeaDdmToDd(field);
+            break;
+        }
+        case 4: // N/S
+        {
+            if (field[0] == 'S')
+                ctx->gpsData.lat = -ctx->gpsData.lat;
+            break;
+        }
+        case 5: // Longitude: DDDMM.MMMMM
+        {
+            ctx->gpsData.lon = nmeaDdmToDd(field);
+            break;
+        }
+        case 6: // E/W
+        {
+            if (field[0] == 'W')
+                ctx->gpsData.lon = -ctx->gpsData.lon;
+            break;
+        }
+        case 7: // Speed over ground: knots -> scaled km/h * 100 (matching VTG)
+        {
+            int32_t knots100 = parseDecimalToScaled(field, 100);
+            ctx->gpsData.speed = (uint32_t)((knots100 * 1852LL + 500) / 1000);
+            break;
+        }
+        case 8: // Track angle in degrees -> scaled by 100
+        {
+            ctx->gpsData.heading = parseDecimalToScaled(field, 100);
+            break;
+        }
         case 9: // Date: DDMMYY
         {
             uint32_t date = atoi(field);
@@ -191,6 +269,7 @@ void SerialGPS::processSentence(char *sentence, uint8_t size)
 {
     if (sentence[3] == 'G' && sentence[4] == 'G' && sentence[5] == 'A') {
         splitSentenceFields(sentence, size, &fieldParseGGA);
+        hasGga = true;
         sendTelemetryFrame();
     }
     else if (sentence[3] == 'V' && sentence[4] == 'T' && sentence[5] == 'G') {
@@ -201,21 +280,33 @@ void SerialGPS::processSentence(char *sentence, uint8_t size)
     else if (sentence[3] == 'R' && sentence[4] == 'M' && sentence[5] == 'C') {
         splitSentenceFields(sentence, size, &fieldParseRMC);
         sendGpsTimeTelemetryFrame();
+        // If receiver does not emit GGA, still send telemetry frame from RMC data!
+        if (!hasGga) {
+            sendTelemetryFrame();
+        }
     }
-    // Maybe we need to think about ZDA as well so we can adjust UTC to local time!
 }
+
 
 void SerialGPS::processBytes(uint8_t *bytes, uint16_t size)
 {
+    rawBytesCount += size;
     for (uint16_t i = 0; i < size; i++) {
         const char c = bytes[i];
         if (nmeaBufferIndex < sizeof(nmeaBuffer)) {
             nmeaBuffer[nmeaBufferIndex++] = c;
+        } else {
+            // Buffer overflow without newline (garbage data or mismatched baud)
+            csumErrors++;
+            nmeaBufferIndex = 0;
         }
         if (c == '\n') {
             // Note that the buffer/size includes the \r\n
-            if (isValidChecksum(nmeaBuffer, nmeaBufferIndex))
+            if (isValidChecksum(nmeaBuffer, nmeaBufferIndex)) {
                 processSentence(nmeaBuffer, nmeaBufferIndex);
+            } else if (nmeaBufferIndex > 5) {
+                csumErrors++;
+            }
             nmeaBufferIndex = 0;
         }
     }
@@ -250,6 +341,41 @@ void SerialGPS::sendTelemetryFrame()
     crsfgps.p.groundspeed = htobe16((uint16_t)(gpsData.speed / 10));
     crsfgps.p.satellites_in_use = gpsData.satellites;
     crsfgps.p.gps_heading = htobe16(gpsData.heading);
+    crsfRouter.SetHeaderAndCrc(&crsfgps.h, CRSF_FRAMETYPE_GPS, CRSF_FRAME_SIZE(sizeof(crsf_sensor_gps_t)));
+    crsfRouter.deliverMessageTo(CRSF_ADDRESS_RADIO_TRANSMITTER, &crsfgps.h);
+}
+
+void SerialGPS::sendDiagnosticTelemetryFrame(bool streamLost)
+{
+    uint8_t diagState = 0;
+    if (streamLost)
+    {
+        diagState = 4; // Lost / Timeout (>3s since last valid packet)
+    }
+    else if (rawBytesCount == 0)
+    {
+        diagState = 0; // No bytes received (wire broken / no power / wrong pin)
+    }
+    else if (!baudLocked)
+    {
+        diagState = (csumErrors > 0) ? 2 : 1; // 1 = scanning baud, 2 = checksum fail
+    }
+    else
+    {
+        diagState = 3; // Baud locked, waiting for valid sentences
+    }
+
+    uint32_t currentBaud = gpsBaudRates[currentBaudIndex];
+    uint16_t speedScaled = (uint16_t)(currentBaud / 100);
+
+    CRSF_MK_FRAME_T(crsf_sensor_gps_t) crsfgps{};
+    crsfgps.p.latitude = 0;
+    crsfgps.p.longitude = 0;
+    crsfgps.p.groundspeed = htobe16(speedScaled);
+    crsfgps.p.gps_heading = htobe16((uint16_t)(csumErrors % 36000));
+    crsfgps.p.altitude = htobe16((int16_t)(1000 + (rawBytesCount % 10000)));
+    crsfgps.p.satellites_in_use = diagState;
+
     crsfRouter.SetHeaderAndCrc(&crsfgps.h, CRSF_FRAMETYPE_GPS, CRSF_FRAME_SIZE(sizeof(crsf_sensor_gps_t)));
     crsfRouter.deliverMessageTo(CRSF_ADDRESS_RADIO_TRANSMITTER, &crsfgps.h);
 }

@@ -30,6 +30,7 @@
 
 #include "devAnalogVbat.h"
 #include "devBaro.h"
+#include "devImu.h"
 #include "devButton.h"
 #include "devLED.h"
 #include "devRXLUA.h"
@@ -87,6 +88,7 @@ device_affinity_t ui_devices[] = {
   {&AnalogVbat_device, 0},
   {&ServoOut_device, 1},
   {&Baro_device, 0}, // must come after AnalogVbat_device to slow updates
+  {&Imu_device, 0},
 #if defined(PLATFORM_ESP32) && !defined(PLATFORM_ESP32_C3)
   {&VTxSPI_device, 0},
   {&MSPVTx_device, 0}, // dependency on VTxSPI_device
@@ -1312,7 +1314,7 @@ static void setupSerial()
     }
     else if (config.GetSerialProtocol() == PROTOCOL_GPS)
     {
-        serialBaud = 115200;
+        serialBaud = 9600;
     }
     bool invert = config.GetSerialProtocol() == PROTOCOL_SBUS || config.GetSerialProtocol() == PROTOCOL_INVERTED_CRSF || config.GetSerialProtocol() == PROTOCOL_DJI_RS_PRO;
 
@@ -1329,6 +1331,11 @@ static void setupSerial()
     }
 
     SerialMode mode = (sbusSerialOutput || sumdSerialOutput)  ? SERIAL_TX_ONLY : SERIAL_FULL;
+    if (config.GetSerialProtocol() == PROTOCOL_GPS)
+    {
+        // GPS on ESP8285 only needs RX (GPIO3 / CH3). Free GPIO1 (CH2) unconditionally for PWM ESC!
+        mode = SERIAL_RX_ONLY;
+    }
     Serial.begin(serialBaud, serialConfig, mode, -1, invert);
 #elif defined(PLATFORM_ESP32)
     uint32_t serialConfig = SERIAL_8N1;
@@ -1376,7 +1383,7 @@ static void setupSerial()
     }
     else if (config.GetSerialProtocol() == PROTOCOL_GPS)
     {
-        serialIO = new SerialGPS(SERIAL_PROTOCOL_TX, SERIAL_PROTOCOL_RX);
+        serialIO = new SerialGPS(SERIAL_PROTOCOL_TX, SERIAL_PROTOCOL_RX, &SERIAL_PROTOCOL_RX);
     }
     else if (hottTlmSerial)
     {
@@ -1480,7 +1487,7 @@ static void setupSerial1()
             break;
         case PROTOCOL_SERIAL1_GPS:
             Serial1.begin(115200, SERIAL_8N1, serial1RXpin, serial1TXpin, false);
-            serial1IO = new SerialGPS(SERIAL1_PROTOCOL_TX, SERIAL1_PROTOCOL_RX);
+            serial1IO = new SerialGPS(SERIAL1_PROTOCOL_TX, SERIAL1_PROTOCOL_RX, &SERIAL1_PROTOCOL_RX);
             break;
     }
 }

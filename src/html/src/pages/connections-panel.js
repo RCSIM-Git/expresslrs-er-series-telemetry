@@ -243,34 +243,47 @@ class ConnectionsPanel extends LitElement {
 
         // put some constraints on pinRx/Tx mode selects
         if (this.pinRxIndex !== undefined && this.pinTxIndex !== undefined) {
+            const isGps = elrsState.config['serial-protocol'] === 9
             const pinRxMode = _(`pwm_${this.pinRxIndex}_mode`)
             const pinTxMode = _(`pwm_${this.pinTxIndex}_mode`)
             const pinRxModeValue = Number.parseInt(pinRxMode.value)
             const pinTxModeValue = Number.parseInt(pinTxMode.value)
             if (index === this.pinRxIndex) {
                 if (pinRxModeValue === PWM_MODE_SERIAL) { // Serial
-                    pinTxMode.value = PWM_MODE_SERIAL
-                    setDisabled(this.pinRxIndex, true)
-                    setDisabled(this.pinTxIndex, true)
-                    pinTxMode.disabled = true
+                    if (!isGps) {
+                        pinTxMode.value = PWM_MODE_SERIAL
+                        setDisabled(this.pinRxIndex, true)
+                        setDisabled(this.pinTxIndex, true)
+                        pinTxMode.disabled = true
+                    } else {
+                        setDisabled(this.pinRxIndex, true)
+                    }
                 }
                 else if (pinTxModeValue === PWM_MODE_SERIAL) {
-                    pinTxMode.value = 0
-                    setDisabled(this.pinRxIndex, false)
-                    setDisabled(this.pinTxIndex, false)
-                    pinTxMode.disabled = false
+                    if (!isGps) {
+                        pinTxMode.value = 0
+                        setDisabled(this.pinRxIndex, false)
+                        setDisabled(this.pinTxIndex, false)
+                        pinTxMode.disabled = false
+                    } else {
+                        setDisabled(this.pinRxIndex, false)
+                    }
                 }
             }
             if (index === this.pinTxIndex) {
                 if (pinTxModeValue === PWM_MODE_SERIAL) { // Serial
-                    pinRxMode.value = PWM_MODE_SERIAL
-                    setDisabled(this.pinRxIndex, true)
-                    setDisabled(this.pinTxIndex, true)
-                    pinTxMode.disabled = true
+                    if (!isGps) {
+                        pinRxMode.value = PWM_MODE_SERIAL
+                        setDisabled(this.pinRxIndex, true)
+                        setDisabled(this.pinTxIndex, true)
+                        pinTxMode.disabled = true
+                    } else {
+                        setDisabled(this.pinTxIndex, true)
+                    }
                 }
             }
             const pinTx = pinTxMode.value
-            if (pinRxModeValue !== PWM_MODE_SERIAL) pinTxMode.value = pinTx
+            if (!isGps && pinRxModeValue !== PWM_MODE_SERIAL) pinTxMode.value = pinTx
         }
 
     }

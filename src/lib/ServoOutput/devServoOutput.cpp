@@ -260,6 +260,26 @@ static bool initialize()
 #endif
         // Mark servo pins that are being used for serial (or other purposes) as disconnected
         auto mode = (eServoOutputMode)config.GetPwmChannel(ch)->val.mode;
+#if defined(PLATFORM_ESP8266)
+        if (config.GetSerialProtocol() == PROTOCOL_GPS)
+        {
+            if (pin == 1)
+            {
+                // GPS on ESP8285 only uses RX (GPIO3 / CH3).
+                // Free GPIO1 (CH2) for PWM ESC even if WebUI forced it to Serial TX!
+                if (mode >= somSerial)
+                {
+                    mode = som50Hz;
+                }
+            }
+            else if (pin == 3)
+            {
+                // GPIO3 (CH3) is strictly dedicated to GPS Serial RX.
+                // NEVER allow servo/PWM driver to allocate or configure GPIO3 as OUTPUT!
+                pin = UNDEF_PIN;
+            }
+        }
+#endif
         if (mode >= somSerial)
         {
             pin = UNDEF_PIN;
@@ -335,7 +355,24 @@ static int event()
         for (int ch = 0; ch < GPIO_PIN_PWM_OUTPUTS_COUNT; ++ch)
         {
             const rx_config_pwm_t *chConfig = config.GetPwmChannel(ch);
-            const auto frequency = servoOutputModeToFrequency((eServoOutputMode)chConfig->val.mode);
+            auto mode = (eServoOutputMode)chConfig->val.mode;
+#if defined(PLATFORM_ESP8266)
+            if (config.GetSerialProtocol() == PROTOCOL_GPS)
+            {
+                if (GPIO_PIN_PWM_OUTPUTS[ch] == 1)
+                {
+                    if (mode >= somSerial)
+                    {
+                        mode = som50Hz;
+                    }
+                }
+                else if (GPIO_PIN_PWM_OUTPUTS[ch] == 3)
+                {
+                    continue; // Never allocate PWM on GPS RX pin!
+                }
+            }
+#endif
+            const auto frequency = servoOutputModeToFrequency(mode);
             if (frequency && servoPins[ch] != UNDEF_PIN)
             {
                 pwmChannels[ch] = PWM.allocate(servoPins[ch], frequency);

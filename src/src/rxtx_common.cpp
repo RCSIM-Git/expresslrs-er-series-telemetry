@@ -21,6 +21,8 @@ static deferred_t deferred[maxDeferredFunctions] = {
 };
 
 boolean i2c_enabled = false;
+int i2c_gpio_sda = UNDEF_PIN;
+int i2c_gpio_scl = UNDEF_PIN;
 static unsigned long rebootTime_Ms = 0;
 
 static void setupWire()
@@ -51,11 +53,24 @@ static void setupWire()
         }
     }
 #endif
+    i2c_gpio_sda = gpio_sda;
+    i2c_gpio_scl = gpio_scl;
+
     if(gpio_sda != UNDEF_PIN && gpio_scl != UNDEF_PIN)
     {
+#if defined(PLATFORM_ESP8266)
+        // CRITICAL FOR ESP8266 OPEN-DRAIN SIMULATION:
+        // On ESP8266, software I2C (core_esp8266_si2c.cpp) drives LOW by setting GPES (output enable).
+        // It requires the GPIO output data registers to be 0 (LOW)!
+        // If output data registers were set to 1 by digitalWrite(HIGH), GPES will drive 3.3V instead of 0V.
+        pinMode(gpio_sda, INPUT_PULLUP);
+        pinMode(gpio_scl, INPUT_PULLUP);
+        digitalWrite(gpio_sda, LOW);
+        digitalWrite(gpio_scl, LOW);
+        GPOC = (1 << gpio_sda) | (1 << gpio_scl);
+#endif
+
         DBGLN("Starting wire on SCL %d, SDA %d", gpio_scl, gpio_sda);
-        // ESP hopes to get Wire::begin(int, int)
-        // ESP32 hopes to get Wire::begin(int = -1, int = -1, uint32 = 0)
         Wire.begin(gpio_sda, gpio_scl);
         Wire.setClock(400000);
         i2c_enabled = true;

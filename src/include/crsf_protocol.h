@@ -87,6 +87,7 @@ typedef enum : uint8_t
     CRSF_FRAMETYPE_MSP_WRITE = 0x7C, // write with 8 byte chunked binary (OpenTX outbound telemetry buffer limit)
     // Ardupilot frames
     CRSF_FRAMETYPE_ARDUPILOT_RESP = 0x80,
+    CRSF_FRAMETYPE_CUSTOM_IMU = 0x86,
 } crsf_frame_type_e;
 
 typedef enum : uint8_t {
@@ -373,6 +374,14 @@ typedef struct crsf_sensor_flight_mode_s
 {
     char flight_mode[16];
 } PACKED crsf_flight_mode_t;
+
+// CRSF_FRAMETYPE_CUSTOM_IMU
+typedef struct crsf_sensor_imu_s
+{
+    int16_t accel_x, accel_y, accel_z; // raw MPU9250 accel, +-2g full scale
+    int16_t gyro_x, gyro_y, gyro_z;    // raw MPU9250 gyro, +-250dps full scale
+    int16_t mag_x, mag_y, mag_z;       // raw AK8963 mag, 0 if not ready
+} PACKED crsf_sensor_imu_t;
 
 /*
  * 0x14 Link statistics

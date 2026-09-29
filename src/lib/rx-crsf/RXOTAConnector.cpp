@@ -146,7 +146,7 @@ void RXOTAConnector::forwardMessage(const crsf_header_t *message)
 #endif
 
     // If we have a comparator or this is a 'broadcast' message we will look for a matching message in the queue and default to overwrite if we find one
-    if (comparator != comparators.end() || message->type < CRSF_FRAMETYPE_DEVICE_PING)
+    if (comparator != comparators.end() || message->type < CRSF_FRAMETYPE_DEVICE_PING || message->type == CRSF_FRAMETYPE_CUSTOM_IMU)
     {
         for (uint16_t i = 0; i < messagePayloads.size();)
         {
