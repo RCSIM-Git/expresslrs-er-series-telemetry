@@ -1,2 +1,4 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+src/html/headers/*.h text eol=lf
+src/html/src/** text eol=lf
