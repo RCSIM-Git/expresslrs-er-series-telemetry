@@ -139,7 +139,7 @@ export function viteEsp32HeaderPlugin(options = {}) {
       const outFile = headerOut
         ? path.resolve(root, headerOut)
         : path.join(distDir, headerName)
-      const artifactName = path.relative(root, outFile)
+      const artifactName = path.relative(root, outFile).split(path.sep).join('/')
 
       header += `\n// Artifact: ${artifactName}\n`
       header += `// Total web asset payload: ${formatBytes(totalCompressedBytes)} across ${assetEntries.length} assets\n`
